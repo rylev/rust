@@ -11,7 +11,6 @@ use rustc_target::spec::abi;
 
 use std::borrow::Cow;
 use std::fmt;
-use std::ops::Deref;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TypeFoldable)]
 pub struct ExpectedFound<T> {
@@ -534,7 +533,6 @@ impl<T> Trait<T> for X {
             TargetFeatureCast(def_id) => {
                 let attrs = self.get_attrs(*def_id);
                 let target_spans = attrs
-                    .deref()
                     .iter()
                     .filter(|attr| attr.has_name(sym::target_feature))
                     .map(|attr| attr.span);
