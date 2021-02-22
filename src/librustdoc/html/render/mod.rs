@@ -1608,13 +1608,19 @@ impl Context<'_> {
         }
 
         if !self.render_redirect_pages {
-            layout::render(
-                &self.shared.layout,
-                &page,
-                |buf: &mut _| print_sidebar(self, it, buf),
-                |buf: &mut _| print_item(self, it, buf),
-                &self.shared.style_files,
-            )
+            self.sess().time("layout::render", || {
+                layout::render(
+                    &self.shared.layout,
+                    &page,
+                    |buf: &mut _| {
+                        self.sess().time("LOCAL_print_sidebar", || print_sidebar(self, it, buf))
+                    },
+                    |buf: &mut _| {
+                        self.sess().time("LOCAL_print_item", || print_item(self, it, buf))
+                    },
+                    &self.shared.style_files,
+                )
+            })
         } else {
             let mut url = self.root_path();
             if let Some(&(ref names, ty)) = self.cache.paths.get(&it.def_id) {
@@ -1772,25 +1778,26 @@ fn print_item(cx: &Context<'_>, item: &clean::Item, buf: &mut Buffer) {
         let cur = &cx.current;
         let amt = if item.is_mod() { cur.len() - 1 } else { cur.len() };
         for (i, component) in cur.iter().enumerate().take(amt) {
-            write!(
-                buf,
-                "<a href=\"{}index.html\">{}</a>::<wbr>",
-                "../".repeat(cur.len() - i - 1),
-                component
-            );
+            write!(buf, "<a href=\"");
+            for _ in 0..cur.len() - i - 1 {
+                write!(buf, "../");
+            }
+            write!(buf, "index.html\">{}</a>::<wbr>", component);
         }
     }
     write!(buf, "<a class=\"{}\" href=\"\">{}</a>", item.type_(), item.name.as_ref().unwrap());
 
     buf.write_str("</span>"); // in-band
     buf.write_str("<span class=\"out-of-band\">");
-    render_stability_since_raw(
-        buf,
-        item.stable_since(cx.tcx()).as_deref(),
-        item.const_stable_since(cx.tcx()).as_deref(),
-        None,
-        None,
-    );
+    cx.sess().time("LOCAL_render_stability_since_raw", || {
+        render_stability_since_raw(
+            buf,
+            item.stable_since(cx.tcx()).as_deref(),
+            item.const_stable_since(cx.tcx()).as_deref(),
+            None,
+            None,
+        )
+    });
     buf.write_str(
         "<span id=\"render-detail\">\
                 <a id=\"toggle-all-docs\" href=\"javascript:void(0)\" \
@@ -1813,24 +1820,42 @@ fn print_item(cx: &Context<'_>, item: &clean::Item, buf: &mut Buffer) {
     buf.write_str("</span></h1>"); // out-of-band
 
     match *item.kind {
-        clean::ModuleItem(ref m) => item_module(buf, cx, item, &m.items),
-        clean::FunctionItem(ref f) | clean::ForeignFunctionItem(ref f) => {
-            item_function(buf, cx, item, f)
+        clean::ModuleItem(ref m) => {
+            cx.sess().time("LOCAL_module", || item_module(buf, cx, item, &m.items))
         }
-        clean::TraitItem(ref t) => item_trait(buf, cx, item, t),
-        clean::StructItem(ref s) => item_struct(buf, cx, item, s),
-        clean::UnionItem(ref s) => item_union(buf, cx, item, s),
-        clean::EnumItem(ref e) => item_enum(buf, cx, item, e),
-        clean::TypedefItem(ref t, _) => item_typedef(buf, cx, item, t),
-        clean::MacroItem(ref m) => item_macro(buf, cx, item, m),
-        clean::ProcMacroItem(ref m) => item_proc_macro(buf, cx, item, m),
-        clean::PrimitiveItem(_) => item_primitive(buf, cx, item),
-        clean::StaticItem(ref i) | clean::ForeignStaticItem(ref i) => item_static(buf, cx, item, i),
-        clean::ConstantItem(ref c) => item_constant(buf, cx, item, c),
-        clean::ForeignTypeItem => item_foreign_type(buf, cx, item),
-        clean::KeywordItem(_) => item_keyword(buf, cx, item),
-        clean::OpaqueTyItem(ref e) => item_opaque_ty(buf, cx, item, e),
-        clean::TraitAliasItem(ref ta) => item_trait_alias(buf, cx, item, ta),
+        clean::FunctionItem(ref f) | clean::ForeignFunctionItem(ref f) => {
+            cx.sess().time("LOCAL_functon", || item_function(buf, cx, item, f))
+        }
+        clean::TraitItem(ref t) => cx.sess().time("LOCAL_trait", || item_trait(buf, cx, item, t)),
+        clean::StructItem(ref s) => {
+            cx.sess().time("LOCAL_struct", || item_struct(buf, cx, item, s))
+        }
+        clean::UnionItem(ref s) => cx.sess().time("LOCAL_union", || item_union(buf, cx, item, s)),
+        clean::EnumItem(ref e) => cx.sess().time("LOCAL_enum", || item_enum(buf, cx, item, e)),
+        clean::TypedefItem(ref t, _) => {
+            cx.sess().time("LOCAL_type_def", || item_typedef(buf, cx, item, t))
+        }
+        clean::MacroItem(ref m) => cx.sess().time("LOCAL_macro", || item_macro(buf, cx, item, m)),
+        clean::ProcMacroItem(ref m) => {
+            cx.sess().time("LOCAL_proc", || item_proc_macro(buf, cx, item, m))
+        }
+        clean::PrimitiveItem(_) => cx.sess().time("LOCAL_prim", || item_primitive(buf, cx, item)),
+        clean::StaticItem(ref i) | clean::ForeignStaticItem(ref i) => {
+            cx.sess().time("LOCAL_static", || item_static(buf, cx, item, i))
+        }
+        clean::ConstantItem(ref c) => {
+            cx.sess().time("LOCAL_const", || item_constant(buf, cx, item, c))
+        }
+        clean::ForeignTypeItem => {
+            cx.sess().time("LOCAL_foreign", || item_foreign_type(buf, cx, item))
+        }
+        clean::KeywordItem(_) => cx.sess().time("LOCAL_keyword", || item_keyword(buf, cx, item)),
+        clean::OpaqueTyItem(ref e) => {
+            cx.sess().time("LOCAL_opaque", || item_opaque_ty(buf, cx, item, e))
+        }
+        clean::TraitAliasItem(ref ta) => {
+            cx.sess().time("LOCAL_trait_alias", || item_trait_alias(buf, cx, item, ta))
+        }
         _ => {
             // We don't generate pages for any other type.
             unreachable!();
@@ -2560,7 +2585,9 @@ fn render_impls(
         })
         .collect::<Vec<_>>();
     impls.sort();
-    w.write_str(&impls.join(""));
+    for imp in impls {
+        w.write_str(&imp)
+    }
 }
 
 fn bounds(t_bounds: &[clean::GenericBound], trait_alias: bool, cache: &Cache) -> String {
@@ -3007,6 +3034,8 @@ fn render_assoc_item(
         parent: ItemType,
         cx: &Context<'_>,
     ) {
+        w.reserve(65536);
+        let _pf = cx.sess().prof.generic_activity("LOCAL_method");
         let name = meth.name.as_ref().unwrap();
         let anchor = format!("#{}.{}", meth.type_(), name);
         let href = match link {
@@ -3024,9 +3053,11 @@ fn render_assoc_item(
                 href(did, cx.cache()).map(|p| format!("{}#{}.{}", p.0, ty, name)).unwrap_or(anchor)
             }
         };
+        let vis =
+            format!("{}", meth.visibility.print_with_space(cx.tcx(), meth.def_id, cx.cache()));
         let mut header_len = format!(
             "{}{}{}{}{}{:#}fn {}{:#}",
-            meth.visibility.print_with_space(cx.tcx(), meth.def_id, cx.cache()),
+            vis,
             header.constness.print_with_space(),
             header.asyncness.print_with_space(),
             header.unsafety.print_with_space(),
@@ -3042,26 +3073,38 @@ fn render_assoc_item(
         } else {
             (0, true)
         };
-        render_attributes(w, meth, false);
+        cx.sess().time("LOCAL_method_render_attrs", || render_attributes(w, meth, false));
+        let func = Function { decl: d, header_len, indent, asyncness: header.asyncness };
+        let decl =
+            cx.sess().time("LOCAL_method_render_func", || format!("{}", func.print(cx.cache())));
+        let gen = cx.sess().time("LOCAL_method_generics", || format!("{}", g.print(cx.cache())));
+        let spotlight = spotlight_decl(&d, cx.cache());
+        let wo = WhereClause { gens: g, indent, end_newline };
+        let wo = cx.sess().time("LOCAL_method_where", || format!("{}", wo.print(cx.cache())));
+        let abi =
+            cx.sess().time("LOCAL_method_abi", || format!("{}", print_abi_with_space(header.abi)));
+        let default = print_default_space(meth.is_default());
+        let _pf = cx.sess().prof.generic_activity("LOCAL_method_write");
+
         write!(
             w,
             "{}{}{}{}{}{}{}fn <a href=\"{href}\" class=\"fnname\">{name}</a>\
              {generics}{decl}{spotlight}{where_clause}",
             if parent == ItemType::Trait { "    " } else { "" },
-            meth.visibility.print_with_space(cx.tcx(), meth.def_id, cx.cache()),
+            vis,
             header.constness.print_with_space(),
             header.asyncness.print_with_space(),
             header.unsafety.print_with_space(),
-            print_default_space(meth.is_default()),
-            print_abi_with_space(header.abi),
+            default,
+            abi,
             href = href,
             name = name,
-            generics = g.print(cx.cache()),
-            decl = Function { decl: d, header_len, indent, asyncness: header.asyncness }
-                .print(cx.cache()),
-            spotlight = spotlight_decl(&d, cx.cache()),
-            where_clause = WhereClause { gens: g, indent, end_newline }.print(cx.cache())
-        )
+            generics = gen,
+            decl = decl,
+            spotlight = spotlight,
+            where_clause = wo
+        );
+        let _pf = cx.sess().prof.generic_activity("LOCAL_method_drop");
     }
     match *item.kind {
         clean::StrippedItem(..) => {}
@@ -3094,14 +3137,16 @@ fn render_assoc_item(
 }
 
 fn item_struct(w: &mut Buffer, cx: &Context<'_>, it: &clean::Item, s: &clean::Struct) {
-    wrap_into_docblock(w, |w| {
-        w.write_str("<pre class=\"rust struct\">");
-        render_attributes(w, it, true);
-        render_struct(w, it, Some(&s.generics), s.struct_type, &s.fields, "", true, cx);
-        w.write_str("</pre>")
+    cx.sess().time("LOCAL_struct_pre", || {
+        wrap_into_docblock(w, |w| {
+            w.write_str("<pre class=\"rust struct\">");
+            render_attributes(w, it, true);
+            render_struct(w, it, Some(&s.generics), s.struct_type, &s.fields, "", true, cx);
+            w.write_str("</pre>")
+        })
     });
 
-    document(w, cx, it, None);
+    cx.sess().time("LOCAL_struct_document", || document(w, cx, it, None));
     let mut fields = s
         .fields
         .iter()
@@ -3118,8 +3163,9 @@ fn item_struct(w: &mut Buffer, cx: &Context<'_>, it: &clean::Item, s: &clean::St
                        Fields{}<a href=\"#fields\" class=\"anchor\"></a></h2>",
                 document_non_exhaustive_header(it)
             );
-            document_non_exhaustive(w, it);
+            cx.sess().time("LOCAL_struct_dcoument_non_ex", || document_non_exhaustive(w, it));
             for (field, ty) in fields {
+                let _pf = cx.sess().prof.generic_activity("LOCAL_struct_field");
                 let id = cx.derive_id(format!(
                     "{}.{}",
                     ItemType::StructField,
@@ -3140,7 +3186,9 @@ fn item_struct(w: &mut Buffer, cx: &Context<'_>, it: &clean::Item, s: &clean::St
             }
         }
     }
-    render_assoc_items(w, cx, it, it.def_id, AssocItemRender::All)
+    cx.sess().time("LOCAL_struct_assoc", || {
+        render_assoc_items(w, cx, it, it.def_id, AssocItemRender::All)
+    })
 }
 
 fn item_union(w: &mut Buffer, cx: &Context<'_>, it: &clean::Item, s: &clean::Union) {
@@ -3524,7 +3572,9 @@ fn render_assoc_items(
         Some(v) => v,
         None => return,
     };
-    let (non_trait, traits): (Vec<_>, _) = v.iter().partition(|i| i.inner_impl().trait_.is_none());
+    let (non_trait, traits): (Vec<_>, _) = cx
+        .sess()
+        .time("LOCAL_assoc_partition", || v.iter().partition(|i| i.inner_impl().trait_.is_none()));
     if !non_trait.is_empty() {
         let render_mode = match what {
             AssocItemRender::All => {
@@ -3536,6 +3586,7 @@ fn render_assoc_items(
                 RenderMode::Normal
             }
             AssocItemRender::DerefFor { trait_, type_, deref_mut_ } => {
+                let _pf = cx.sess().prof.generic_activity("LOCAL_assoc_deref_for");
                 let id = cx.derive_id(small_url_encode(format!(
                     "deref-methods-{:#}",
                     type_.print(cx.cache())
@@ -3558,6 +3609,7 @@ fn render_assoc_items(
             }
         };
         for i in &non_trait {
+            let _pf = cx.sess().prof.generic_activity("LOCAL_assoc_render_impl");
             render_impl(
                 w,
                 cx,
@@ -3576,6 +3628,7 @@ fn render_assoc_items(
         }
     }
     if !traits.is_empty() {
+        let pf = cx.sess().prof.generic_activity("LOCAL_assoc_deref_render");
         let deref_impl = traits
             .iter()
             .find(|t| t.inner_impl().trait_.def_id_full(cx.cache()) == cx.cache.deref_trait_did);
@@ -3585,6 +3638,7 @@ fn render_assoc_items(
             });
             render_deref_methods(w, cx, impl_, containing_item, has_deref_mut);
         }
+        drop(pf);
 
         // If we were already one level into rendering deref methods, we don't want to render
         // anything after recursing into any further deref methods above.
@@ -3592,11 +3646,14 @@ fn render_assoc_items(
             return;
         }
 
+        let pf = cx.sess().prof.generic_activity("LOCAL_assoc_partitioning_2");
         let (synthetic, concrete): (Vec<&&Impl>, Vec<&&Impl>) =
             traits.iter().partition(|t| t.inner_impl().synthetic);
         let (blanket_impl, concrete): (Vec<&&Impl>, _) =
             concrete.into_iter().partition(|t| t.inner_impl().blanket_impl.is_some());
+        drop(pf);
 
+        let pf = cx.sess().prof.generic_activity("LOCAL_assoc_render_impls2");
         let mut impls = Buffer::empty_from(&w);
         render_impls(cx, &mut impls, &concrete, containing_item);
         let impls = impls.into_inner();
@@ -3610,8 +3667,10 @@ fn render_assoc_items(
                 impls
             );
         }
+        drop(pf);
 
         if !synthetic.is_empty() {
+            let _pf = cx.sess().prof.generic_activity("LOCAL_assoc_synthentic");
             w.write_str(
                 "<h2 id=\"synthetic-implementations\" class=\"small-section-header\">\
                      Auto Trait Implementations\
@@ -3624,6 +3683,7 @@ fn render_assoc_items(
         }
 
         if !blanket_impl.is_empty() {
+            let _pf = cx.sess().prof.generic_activity("LOCAL_assoc_blanket");
             w.write_str(
                 "<h2 id=\"blanket-implementations\" class=\"small-section-header\">\
                      Blanket Implementations\
@@ -3780,10 +3840,12 @@ fn render_impl(
     // in documentation pages for trait with automatic implementations like "Send" and "Sync".
     aliases: &[String],
 ) {
+    let _pf = cx.sess().prof.generic_activity("LOCAL_render_impl_body");
     let traits = &cx.cache.traits;
     let trait_ = i.trait_did_full(cx.cache()).map(|did| &traits[&did]);
 
     if render_mode == RenderMode::Normal {
+        let pf = cx.sess().prof.generic_activity("LOCAL_impl_id");
         let id = cx.derive_id(match i.inner_impl().trait_ {
             Some(ref t) => {
                 if is_on_foreign_type {
@@ -3794,12 +3856,14 @@ fn render_impl(
             }
             None => "impl".to_string(),
         });
+        drop(pf);
         let aliases = if aliases.is_empty() {
             String::new()
         } else {
             format!(" aliases=\"{}\"", aliases.join(","))
         };
         if let Some(use_absolute) = use_absolute {
+            let _pf = cx.sess().prof.generic_activity("LOCAL_impl_absolute");
             write!(w, "<h3 id=\"{}\" class=\"impl\"{}><code class=\"in-band\">", id, aliases);
             write!(w, "{}", i.inner_impl().print(cx.cache(), use_absolute));
             if show_def_docs {
@@ -3821,6 +3885,7 @@ fn render_impl(
             }
             w.write_str("</code>");
         } else {
+            let _pf = cx.sess().prof.generic_activity("LOCAL_impl_non_absolute");
             write!(
                 w,
                 "<h3 id=\"{}\" class=\"impl\"{}><code class=\"in-band\">{}</code>",
@@ -3830,13 +3895,15 @@ fn render_impl(
             );
         }
         write!(w, "<a href=\"#{}\" class=\"anchor\"></a>", id);
-        render_stability_since_raw(
-            w,
-            i.impl_item.stable_since(cx.tcx()).as_deref(),
-            i.impl_item.const_stable_since(cx.tcx()).as_deref(),
-            outer_version,
-            outer_const_version,
-        );
+        cx.sess().time("LOCAL_impl_stability", || {
+            render_stability_since_raw(
+                w,
+                i.impl_item.stable_since(cx.tcx()).as_deref(),
+                i.impl_item.const_stable_since(cx.tcx()).as_deref(),
+                outer_version,
+                outer_const_version,
+            )
+        });
         write_srclink(cx, &i.impl_item, w);
         w.write_str("</h3>");
 
@@ -3847,6 +3914,7 @@ fn render_impl(
         }
 
         if let Some(ref dox) = cx.shared.maybe_collapsed_doc_value(&i.impl_item) {
+            let _pf = cx.sess().prof.generic_activity("LOCAL_impl_markdown");
             let mut ids = cx.id_map.borrow_mut();
             write!(
                 w,
@@ -3877,6 +3945,7 @@ fn render_impl(
         trait_: Option<&clean::Trait>,
         show_def_docs: bool,
     ) {
+        let _pf = cx.sess().prof.generic_activity("LOCAL_impl_item");
         let item_type = item.type_();
         let name = item.name.as_ref().unwrap();
 
@@ -3897,6 +3966,7 @@ fn render_impl(
             };
         match *item.kind {
             clean::MethodItem(..) | clean::TyMethodItem(_) => {
+                let _pf = cx.sess().prof.generic_activity("LOCAL_impl_item_method");
                 // Only render when the method is not static or we allow static methods
                 if render_method_item {
                     let id = cx.derive_id(format!("{}.{}", item_type, name));
@@ -3916,6 +3986,7 @@ fn render_impl(
                 }
             }
             clean::TypedefItem(ref tydef, _) => {
+                let _pf = cx.sess().prof.generic_activity("LOCAL_impl_type_def");
                 let id = cx.derive_id(format!("{}.{}", ItemType::AssocType, name));
                 write!(w, "<h4 id=\"{}\" class=\"{}{}\"><code>", id, item_type, extra_class);
                 assoc_type(
@@ -3930,6 +4001,7 @@ fn render_impl(
                 w.write_str("</code></h4>");
             }
             clean::AssocConstItem(ref ty, ref default) => {
+                let _pf = cx.sess().prof.generic_activity("LOCAL_impl_assoc_const");
                 let id = cx.derive_id(format!("{}.{}", item_type, name));
                 write!(w, "<h4 id=\"{}\" class=\"{}{}\"><code>", id, item_type, extra_class);
                 assoc_const(w, item, ty, default.as_ref(), link.anchor(&id), "", cx);
@@ -3945,6 +4017,7 @@ fn render_impl(
                 w.write_str("</h4>");
             }
             clean::AssocTypeItem(ref bounds, ref default) => {
+                let _pf = cx.sess().prof.generic_activity("LOCAL_impl_assoc_type");
                 let id = cx.derive_id(format!("{}.{}", item_type, name));
                 write!(w, "<h4 id=\"{}\" class=\"{}{}\"><code>", id, item_type, extra_class);
                 assoc_type(w, item, bounds, default.as_ref(), link.anchor(&id), "", cx.cache());
@@ -4020,6 +4093,7 @@ fn render_impl(
         outer_const_version: Option<&str>,
         show_def_docs: bool,
     ) {
+        let _pf = cx.sess().prof.generic_activity("LOCAL_impl_default");
         for trait_item in &t.items {
             let n = trait_item.name;
             if i.items.iter().any(|m| m.name == n) {
