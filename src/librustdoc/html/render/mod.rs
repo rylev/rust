@@ -4263,7 +4263,7 @@ fn get_next_url(buffer: &mut String, used_links: &mut FxHashSet<String>, mut url
     let mut add = 1;
     url.push_str("-0");
     while {
-        let mut number = add;
+        let mut number = add - 1;
         let mut num_digits = 0;
         while number != 0 {
             number = number / 10;
