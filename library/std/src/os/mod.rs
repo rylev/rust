@@ -83,7 +83,7 @@ pub mod linux;
         all(target_vendor = "fortanix", target_env = "sgx")
     )
 )))]
-#[cfg(any(target_os = "wasi", doc))]
+#[cfg(any(all(target_os = "wasi", not(target_env = "p2")), doc))]
 pub mod wasi;
 
 #[cfg(any(all(target_os = "wasi", target_env = "p2"), doc))]
